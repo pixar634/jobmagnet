@@ -2,6 +2,7 @@
 page polls, so nothing waits on a frozen request."""
 import contextvars
 import datetime as dt
+import re
 import threading
 import traceback
 import uuid
@@ -251,9 +252,11 @@ def profile_cv(pid: str, body: dict = Body(...)):
 def profile_basics(body: dict = Body(...)):
     """Corrections from the review screen (and Settings): contact details and the summary."""
     profile = load_profile()
-    for k in ("name", "headline", "email", "phone", "location", "linkedin", "nationality", "availability"):
+    for k in ("name", "headline", "email", "phone", "location", "linkedin", "github", "nationality", "availability"):
         if k in body:
             profile["basics"][k] = str(body[k]).strip()
+            if k in ("linkedin", "github"):
+                profile["basics"][k] = re.sub(r"^https?://(www\.)?", "", profile["basics"][k]).rstrip("/")
     if "summary" in body:
         profile["summary"] = str(body["summary"]).strip()
     save_profile(profile)

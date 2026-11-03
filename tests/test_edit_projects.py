@@ -1,4 +1,4 @@
-"""Projects show on every CV by default; one CV can leave out the section, a project or a bullet, or reword them,
+"""Projects stay off every CV by default; one CV can tick a project in, reword it, or leave a bullet out,
 without touching the profile."""
 import json
 
@@ -25,12 +25,21 @@ def _setup():
     return p, plan
 
 
-def test_projects_show_by_default_and_are_editable_sections():
+def test_projects_stay_off_by_default_but_are_editable_sections():
     profile, plan = _setup()
-    assert [p["name"] for p in render.build_doc(profile, plan, OPTIONS)["projects"]] == ["Tool", "Site"]
+    assert render.build_doc(profile, plan, OPTIONS)["projects"] == []
     got = tailor.get_plan("a1")["projects"]
     assert [(p["id"], p["role"], p["bullets"], p["hidden"]) for p in got] == [
-        ("tool", "Open-source app", ["Built the app.", "Wrote the tests."], False), ("site", "Side project", ["Made a site."], False)]
+        ("tool", "Open-source app", ["Built the app.", "Wrote the tests."], True), ("site", "Side project", ["Made a site."], True)]
+
+
+def test_a_ticked_project_goes_on_that_cv_only(monkeypatch):
+    profile, _ = _setup()
+    monkeypatch.setattr(tailor, "rerender", lambda app_id, changes: {"id": app_id})
+    tailor.save_plan("a1", {"projects": [{"id": "tool", "role": "Open-source app", "bullets": ["Built the app."], "hidden": False}]})
+    plan = json.loads((output_dir() / "a1" / "plan.json").read_text("utf-8"))
+    assert [p["name"] for p in render.build_doc(load_profile(), plan, OPTIONS)["projects"]] == ["Tool"]
+    assert [p["hidden"] for p in tailor.get_plan("a1")["projects"]] == [False, True]
 
 
 def test_a_cv_can_leave_out_or_reword_without_touching_the_profile(monkeypatch):

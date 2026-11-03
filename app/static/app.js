@@ -549,11 +549,11 @@ function renderEditor() {
       r.bullets.map((b, bi) => row(b, `data-r="${ri}" data-b="${bi}"`,
         `${bi ? tool(`data-up="${ri}:${bi}"`, "Move up", ICON.up) : ""}${tool(`data-del="${ri}:${bi}"`, "Remove this bullet", ICON.x)}`)).join("")
       + `<button class="btn btn--sm btn--dashed" data-addb="${ri}">Add a bullet</button>`)),
-    // Projects: shown on every CV by default; here you can leave the section, a project or a bullet out of this one.
+    // Projects: left off every CV by default; tick one to add it to this CV, and reword it for this one.
     ...((ED.projects || []).length ? [`<div class="editor__row"><span class="eyebrow">Projects · ${ED.projects.filter((p) => !p.hidden).length} of ${ED.projects.length} on this CV</span>
-      <span class="editor__tools"><button class="btn btn--sm btn--ghost" data-pall="${ED.projects.every((p) => p.hidden) ? "show" : "hide"}">${ED.projects.every((p) => p.hidden) ? "Put the Projects section back" : "Leave the Projects section out"}</button></span></div>`] : []),
-    ...(ED.projects || []).map((p, pi) => sec(false, `<span>${esc(p.name)}</span><span class="disclosure__sub">Project${p.dates ? `, ${esc(p.dates)}` : ""}${p.hidden ? ", left out" : ""}</span>`,
-      `<label class="check"><input type="checkbox" data-ph="${pi}" ${p.hidden ? "" : "checked"}> Show on this CV</label>
+      <span class="editor__tools"><button class="btn btn--sm btn--ghost" data-pall="${ED.projects.every((p) => p.hidden) ? "show" : "hide"}">${ED.projects.every((p) => p.hidden) ? "Add all projects to this CV" : "Leave the Projects section out"}</button></span></div>`] : []),
+    ...(ED.projects || []).map((p, pi) => sec(false, `<span>${esc(p.name)}</span><span class="disclosure__sub">Project${p.dates ? `, ${esc(p.dates)}` : ""}${p.hidden ? ", not on this CV" : ""}</span>`,
+      `<label class="check"><input type="checkbox" data-ph="${pi}" ${p.hidden ? "" : "checked"}> Add to this CV</label>
       <span class="eyebrow" style="margin-top:6px">Role line</span><input type="text" data-p="${pi}" data-k="role" value="${esc(p.role)}">
       <span class="eyebrow" style="margin-top:6px">Bullets</span>`
       + p.bullets.map((b, bi) => row(b, `data-p="${pi}" data-pb="${bi}"`,

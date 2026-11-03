@@ -100,7 +100,7 @@ const monthYear = (v) => { if (!v) return "Present"; const [y, m] = String(v).sp
 
 function renderReview(root) {
   const R = S.state.review, p = R.profile, b = p.basics, st = R.strategy;
-  const fields = [["name", "Name"], ["email", "Email"], ["phone", "Phone"], ["location", "Location (City, Country)"], ["linkedin", "LinkedIn"], ["nationality", "Nationality (for visa-sponsorship lines)"], ["availability", "Availability line (e.g. Serving notice, available from 1 Dec)"]];
+  const fields = [["name", "Name"], ["email", "Email"], ["phone", "Phone"], ["location", "Location (City, Country)"], ["linkedin", "LinkedIn"], ["github", "GitHub (e.g. github.com/you)"], ["nationality", "Nationality (for visa-sponsorship lines)"], ["availability", "Availability line (e.g. Serving notice, available from 1 Dec)"]];
   const flags = R.flags.map((f) => `<div class="notice ${f.level === "error" ? "notice--bad" : ""}">${esc(f.text)}</div>`).join("");
   root.innerHTML = `
     <div class="page setup__page">

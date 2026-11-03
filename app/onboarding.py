@@ -55,7 +55,7 @@ Rules:
   gives about that engagement or the employer, if any; else "".
 - "skills": group the skills section into 3 to 8 labelled groups as the CV does; if the CV has no skills section, build
   groups only from tools, methods and domains named in the experience. Never add a skill that is not in the CV.
-- Leave a field "" (or [] / null) when the CV doesn't say; never guess a phone number, email, LinkedIn or location.
+- Leave a field "" (or [] / null) when the CV doesn't say; never guess a phone number, email, LinkedIn, GitHub or location.
 - "headline": the person's current title as the CV states it (or its top line). "summary": the CV's own summary,
   verbatim; if it has none, write 2 plain sentences from the CV's facts only.
 - "projects": only side projects, independent products or notable projects the CV lists on their own, not employer duties.
@@ -63,7 +63,7 @@ Rules:
 
 Return one JSON object only:
 {"basics": {"name": "", "headline": "", "email": "", "phone": "", "location": "City, Country", "linkedin": "domain/path, no https://",
-            "nationality": ""},
+            "github": "github.com/user, no https://", "nationality": ""},
  "summary": "",
  "experience": [{"title": "", "company": "", "client": "", "context": "", "location": "", "start": "YYYY-MM", "end": "YYYY-MM or null",
                  "internship": false, "optional": false, "stack": ["tools and methods used in this role, from the CV"],
@@ -107,8 +107,9 @@ def _list(v) -> list:
 def build_profile(raw: dict) -> dict:
     """The model's structured reading, cleaned into the master profile's shape. Ids are made here, not by the model."""
     b = raw.get("basics") or {}
-    basics = {k: _str(b.get(k)) for k in ("name", "headline", "email", "phone", "location", "linkedin", "nationality")}
-    basics["linkedin"] = re.sub(r"^https?://(www\.)?", "", basics["linkedin"]).rstrip("/")
+    basics = {k: _str(b.get(k)) for k in ("name", "headline", "email", "phone", "location", "linkedin", "github", "nationality")}
+    for k in ("linkedin", "github"):
+        basics[k] = re.sub(r"^https?://(www\.)?", "", basics[k]).rstrip("/")
     basics["availability"] = ""
     experience, used = [], set()
     for r in _list(raw.get("experience")):

@@ -44,6 +44,8 @@ def check(pdf: Path, doc: dict, profile: dict, max_pages: int) -> dict:
         add("phone", "Phone parses as one number", bool(phone_re.search(flat)), b["phone"])
     if b.get("linkedin"):
         add("linkedin", "LinkedIn URL parses", b["linkedin"] in flat, b["linkedin"])
+    if b.get("github"):
+        add("github", "GitHub URL parses", b["github"] in flat, b["github"])
     add("name", "Name is the first text on the page", flat.startswith(b["name"]), flat[:40])
 
     pos, last, order_ok = [], -1, True
