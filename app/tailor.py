@@ -806,7 +806,7 @@ def get_plan(app_id: str) -> dict:
 
 def _plan_projects(profile: dict, plan: dict, track: str) -> list[dict]:
     """This CV's projects as editable sections: its own wording where it has one, else the profile's."""
-    from .profile import fmt_month, project_key, projects_for
+    from .profile import fmt_month, project_key, project_shown, projects_for
     edits = plan.get("projects") or {}
     out = []
     for p in projects_for(profile, track):
@@ -815,7 +815,7 @@ def _plan_projects(profile: dict, plan: dict, track: str) -> list[dict]:
                     "dates": f"{fmt_month(p.get('start'))} – {fmt_month(p.get('end'))}" if p.get("start") else "",
                     "role": own.get("role") if own.get("role") is not None else p.get("role", ""),
                     "bullets": own["bullets"] if own.get("bullets") is not None else [b["text"] for b in p["bullets"]],
-                    "hidden": bool(own.get("hidden"))})
+                    "hidden": not project_shown(own)})
     return out
 
 

@@ -153,6 +153,11 @@ def project_key(p: dict) -> str:
     return p.get("id") or p.get("name", "")
 
 
+def project_shown(own: dict) -> bool:
+    """Projects stay off a CV until the candidate ticks one in for it."""
+    return own.get("hidden") is False
+
+
 def projects_for(profile: dict, track: str) -> list[dict]:
     """Projects shown for a track: those tagged with it, and untagged ones everywhere."""
     return [p for p in profile.get("projects", []) if not p.get("tracks") or track in p["tracks"]]
@@ -161,7 +166,7 @@ def projects_for(profile: dict, track: str) -> list[dict]:
 def brief_view(profile: dict, track: str = "") -> dict:
     """The slice of the profile the model sees: facts only, no contact details."""
     return {
-        "projects (printed exactly as written; cite them in the summary or skills where they fit the JD)": [
+        "projects (off the CV unless the candidate ticks one in later; never name them in the headline or summary)": [
             {k: p.get(k, "") for k in ("name", "role", "stack")} | {"dates": f"{fmt_month(p.get('start'))} - {fmt_month(p.get('end'))}",
                                                            "bullets": [b["text"] for b in p["bullets"]]}
             for p in projects_for(profile, track)],

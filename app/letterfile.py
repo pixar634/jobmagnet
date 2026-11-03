@@ -20,7 +20,7 @@ def file_stem(profile: dict, company: str, role: str) -> str:
 
 
 def _contact(basics: dict) -> list[str]:
-    return [x for x in (basics.get("email"), basics.get("phone"), basics.get("location"), basics.get("linkedin")) if x]
+    return [x for x in (basics.get("email"), basics.get("phone"), basics.get("location"), basics.get("linkedin"), basics.get("github")) if x]
 
 
 def _paragraphs(text: str) -> list[list[str]]:

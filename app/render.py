@@ -47,13 +47,13 @@ def build_doc(profile: dict, plan: dict, options: dict) -> dict:
     ]
     market_id = options["market"]
     languages = [l for l in profile.get("languages", []) if not l.get("markets") or market_id in l["markets"]]
-    from .profile import project_key, projects_for
+    from .profile import project_key, project_shown, projects_for
     # A CV can carry its own wording for a project (edited by hand), or leave one out; the profile is untouched.
     edits = plan.get("projects") or {}
     projects = []
     for p in projects_for(profile, options.get("track", "")):
         own = edits.get(project_key(p)) or {}
-        if own.get("hidden"):
+        if not project_shown(own):
             continue
         projects.append({"name": p["name"], "role": own.get("role") if own.get("role") is not None else p.get("role", ""),
                          "url": p.get("url", ""),
@@ -66,6 +66,7 @@ def build_doc(profile: dict, plan: dict, options: dict) -> dict:
     return {
         "name": b["name"], "headline": plan["headline"], "email": b.get("email", ""), "phone": b.get("phone", ""),
         "location": b.get("location", ""), "linkedin": b.get("linkedin", ""),
+        "github": b.get("github", ""),
         "header_line": (options.get("header_line") or "").strip(),
         "summary": plan["summary"], "skills": copy.deepcopy(plan["skills"]), "experience": experience,
         "projects": projects,

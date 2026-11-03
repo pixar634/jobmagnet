@@ -135,7 +135,7 @@ def _contact(profile: dict, report: dict) -> list[tuple[str, str]]:
     b = profile["basics"]
     name = (b.get("name") or "").split()
     current = next((r for r in profile["experience"] if not r.get("end")), None)
-    links = {"github": "", "website": ""}
+    links = {"github": "https://" + b["github"] if b.get("github") else "", "website": ""}
     for p in profile.get("projects", []):
         url = p.get("url") or ""
         if "github.com" in url and not links["github"]:
