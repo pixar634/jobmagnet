@@ -75,7 +75,7 @@ def test_the_interview_writer_gets_the_files_fenced(app_id, monkeypatch):
     briefs = []
 
     class Writer:
-        def run(self, brief, timeout=0, tools=None):
+        def run(self, brief, timeout=0, tools=None, name=""):
             briefs.append(brief)
             return json.dumps({"needs_coding": False, "rounds": [{"name": "Screen", "questions": [
                 {"q": "Why Acme?", "level": "basic", "kind": "behavioural", "answer": ["a"], "why": "w"}]}]})
@@ -117,7 +117,7 @@ def test_the_research_follows_up_the_files_and_is_redone_when_they_change(app_id
     runs = []
 
     class Engine:
-        def run(self, brief, timeout=0, tools=None):
+        def run(self, brief, timeout=0, tools=None, name=""):
             runs.append((brief, tools))
             if tools:       # the research run
                 return json.dumps({"summary": "s", "process": [

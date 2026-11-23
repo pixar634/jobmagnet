@@ -7,9 +7,10 @@
    it found the real process and from industry practice otherwise. Coding appears only when the role codes;
    managerial and case questions take its place when it doesn't. The last round always covers culture fit,
    built on the company's own stated values. CV questions probe the tailored CV, answered from real facts only.
-3. The coding test (only for roles that code): an adaptive, LeetCode-style set at five levels. The page runs the
-   candidate's code, and checks each problem's tests against its reference solution, in a browser sandbox; no
-   generated code ever runs on this machine.
+3. The coding test (only for roles that code): an adaptive, LeetCode-style set at five levels. It is written level
+   by level and saved as it goes, starting at level 2, so the test can begin while the other levels are still being
+   generated. The page runs the candidate's code, and checks each problem's tests against its reference solution, in
+   a browser sandbox; no generated code ever runs on this machine.
 4. The practical assessment (only for roles that code): one small project built up over four levels against a
    clock, the shape of CodeSignal's practical take-homes, with visible tests while working and hidden ones at
    submit. Run in the same sandbox; afterwards a review scores the code the way a company grades the take-home.
@@ -17,13 +18,18 @@
 Saved next to the PDF as interview.json, codetest.json, practical.json and interview.md."""
 import datetime as dt
 import json
+import os
 import re
+import threading
+import time
 
-from . import attachments
+from . import attachments, logs
 from .config import APP, output_dir
-from .engines import get_engine, parse_json_reply
+from .engines import EngineError, get_engine, parse_json_reply
 from .profile import brief_view, experience_years_label, load_profile
 from .untrusted import fence
+
+log = logs.get_logger("interview")
 
 FILE, CODE_FILE, PRACTICAL_FILE = "interview.json", "codetest.json", "practical.json"
 SAMPLE = APP / "practical_sample.json"   # a checked task that needs no writer: the page's "try a sample"
@@ -165,7 +171,7 @@ PROFILE (every fact is true; nothing else is):
 {profile}"""
 
 CODETEST = """You are setting an adaptive online coding assessment for a "{role}" candidate at {company}, like the one
-such a company sends before its technical interviews. Write {n} problems for each level from 1 to 5:
+such a company sends before its technical interviews. Write {n} problems for {scope}:
 1 warm-up (LeetCode easy), 2 easy, 3 medium, 4 medium-hard, 5 hard. Choose topics this JD and company care about
 (for example data processing and parsing for data roles, graphs and caching for platform roles, string and array
 work for product engineering), and keep them distinct.{avoid}
@@ -343,8 +349,9 @@ def _research(company: str, role: str, jd: str, progress, material: str = "", fi
     progress(f"Researching what {company} builds, what it values and how it interviews"
              + (f", following up what your {len(files)} file(s) mention" if files else "") + " (1 to 3 minutes)")
     extra = RESEARCH_MATERIAL.format(text=fence(material)) if material else ""
-    reply = get_engine("claude:sonnet").run(RESEARCH.format(company=company, role=role, jd=fence(jd[:12000]), material=extra),
-                                            timeout=600, tools=["WebSearch"])
+    reply = get_engine("claude:sonnet").run(
+        RESEARCH.format(company=company, role=role, jd=fence(jd[:12000]), material=extra),
+        timeout=600, tools=["WebSearch"], name="interview.research")
     raw = parse_json_reply(reply)
     return {"from_files": files or [],
             "summary": str(raw.get("summary") or "").strip(), "team_guess": str(raw.get("team_guess") or "").strip(),
@@ -400,7 +407,7 @@ def generate(app_id: str, options: dict, engine_id: str = "claude:opus", progres
         jd=fence(jd[:12000]), plan=json.dumps(plan, indent=1, ensure_ascii=False)[:12000],
         profile=json.dumps(brief_view(profile), ensure_ascii=False)[:20000])
     # The writer follows the top bar's choice; the research above always runs on Claude, which has web search.
-    raw = parse_json_reply(get_engine(engine_id).run(brief, timeout=900))
+    raw = parse_json_reply(get_engine(engine_id).run(brief, timeout=900, name="interview.prep"))
 
     coding = bool(raw.get("needs_coding"))
     rounds = []
@@ -438,7 +445,7 @@ def write_say(app_id: str, round_id: str, engine_id: str = "claude:opus", progre
         brief = SAY.format(role=d["role"], company=d["company"], say_rules=SAY_RULES,
                            questions=json.dumps([{"i": i, "q": q["q"], "kind": q["kind"], "points": q["answer"]} for i, q in todo], indent=1, ensure_ascii=False),
                            profile=json.dumps(brief_view(load_profile()), ensure_ascii=False)[:20000])
-        raw = parse_json_reply(get_engine(engine_id).run(brief, timeout=600))
+        raw = parse_json_reply(get_engine(engine_id).run(brief, timeout=600, name="interview.say"))
         for a in raw.get("answers") or []:
             try:
                 i = int(a.get("i"))
@@ -475,43 +482,96 @@ def _problem(p: dict) -> dict | None:
             "complexity": str(p.get("complexity") or "").strip()}
 
 
-def _write_problems(report: dict, jd: str, engine_id: str, n: int, avoid: list[str], only_level: int | None = None) -> list[dict]:
+def _write_problems(report: dict, jd: str, engine_id: str, n: int, avoid: list[str], only_level: int | None = None,
+                    attempts: int = 2) -> list[dict]:
+    """One batch of problems from the writer. Retried once: a long reply is sometimes cut off before its last brace."""
     note = f"\nAvoid these problems, already set: {'; '.join(avoid)}." if avoid else ""
-    if only_level:
-        note += f"\nThis time write {n} problems at level {only_level} only."
-    brief = CODETEST.format(role=report["role"], company=report["company"], n=n, avoid=note, jd=fence(jd[:10000]))
-    raw = parse_json_reply(get_engine(engine_id).run(brief, timeout=900))
-    probs = [x for x in (_problem(p) for p in raw.get("problems") or []) if x]
-    return [p for p in probs if not only_level or p["level"] == only_level]
+    scope = f"level {only_level} only" if only_level else "each level from 1 to 5"
+    brief = CODETEST.format(role=report["role"], company=report["company"], n=n, scope=scope, avoid=note,
+                            jd=fence(jd[:10000]))
+    for attempt in range(1, attempts + 1):
+        retry = "" if attempt == 1 else ("\n\nYour previous reply was not valid JSON or had no usable problems. "
+                                         "Return one complete JSON object only.")
+        try:
+            raw = parse_json_reply(get_engine(engine_id).run(brief + retry, timeout=900, name="interview.codetest"))
+        except EngineError as e:
+            log.warning("coding-test batch%s, attempt %s failed: %s",
+                        f" at level {only_level}" if only_level else "", attempt, e)
+            continue
+        probs = [x for x in (_problem(p) for p in raw.get("problems") or []) if x]
+        probs = [p for p in probs if not only_level or p["level"] == only_level]
+        if probs:
+            return probs
+        log.warning("coding-test batch%s returned no usable problems (attempt %s)",
+                    f" at level {only_level}" if only_level else "", attempt)
+    return []
+
+
+LEVEL_ORDER = (2, 3, 1, 4, 5)   # the test opens on level 2; 3 is the step up, 1 the fallback, 4 and 5 fill in last
+_CODE_LOCK = threading.Lock()   # one writer at a time: the page reads the file while the rest is still being written
+
+
+def _save_codetest(app_id: str, out: dict) -> dict:
+    """The temporary file keeps a reader from seeing half a write while the page polls for new levels. Windows won't
+    replace a file another thread has open for a moment (the database sync copies it), so retry briefly."""
+    path = _folder(app_id) / CODE_FILE
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(out, indent=2, ensure_ascii=False), "utf-8")
+    for attempt in range(5):
+        try:
+            os.replace(tmp, path)
+            return out
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.05)
+    return out
 
 
 def generate_codetest(app_id: str, engine_id: str = "claude:opus", progress=lambda m: None) -> dict:
+    """Written a level at a time, level 2 first, and saved after each batch: the page starts the test as soon as the
+    opening level is ready while the rest is still being generated."""
     report, _plan, jd = _app(app_id)
-    progress("Writing the coding test: two problems at each of five levels, with tests and reference solutions (2 to 5 minutes)")
-    probs = _write_problems(report, jd, engine_id, 2, [])
-    if not probs:
-        raise RuntimeError("The model returned no usable problems. Try again.")
-    for i, p in enumerate(probs):
-        p["id"] = f"p{i + 1}"
     prep = load(app_id) or {}
     out = {"generated_at": dt.datetime.now().isoformat(timespec="seconds"), "engine": engine_id,
-           "language": prep.get("coding_language") or "python", "problems": probs}
-    (_folder(app_id) / CODE_FILE).write_text(json.dumps(out, indent=2, ensure_ascii=False), "utf-8")
-    return out
+           "language": prep.get("coding_language") or "python", "problems": [], "missing_levels": []}
+    progress("Writing your coding test: level 2 first, so you can start while the other levels are written (2 to 5 minutes)")
+    for level in LEVEL_ORDER:
+        progress(f"Writing two level {level} problems")
+        batch = _write_problems(report, jd, engine_id, 2, [p["title"] for p in out["problems"]], only_level=level)
+        if batch:
+            for p in batch:
+                p["id"] = f"p{len(out['problems']) + 1}"
+                out["problems"].append(p)
+            with _CODE_LOCK:
+                _save_codetest(app_id, out)
+        else:
+            out["missing_levels"].append(level)
+            progress(f"Level {level} didn't come back this time; you can ask for it again from the test")
+    if not out["problems"]:
+        raise RuntimeError("The model returned no usable problems. Try again.")
+    if out["missing_levels"]:
+        log.warning("coding test saved without levels %s", out["missing_levels"])
+    with _CODE_LOCK:
+        return _save_codetest(app_id, out)
 
 
 def more_problems(app_id: str, level: int, engine_id: str = "claude:opus", progress=lambda m: None) -> dict:
     """The adaptive test ran out of problems at a level: write two more there."""
     report, _plan, jd = _app(app_id)
-    data = load_codetest(app_id) or {"problems": [], "language": "python"}
+    data = load_codetest(app_id) or {"problems": [], "language": "python", "missing_levels": []}
     progress(f"Writing two more level {level} problems")
     probs = _write_problems(report, jd, engine_id, 2, [p["title"] for p in data["problems"]], only_level=level)
-    start = len(data["problems"])
-    for i, p in enumerate(probs):
-        p["id"] = f"p{start + i + 1}"
-    data["problems"] += probs
-    (_folder(app_id) / CODE_FILE).write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
-    return data
+    if not probs:   # without this the page asks again and again for the same missing level
+        raise RuntimeError(f"The model returned no usable level {level} problems. Try again.")
+    with _CODE_LOCK:
+        data = load_codetest(app_id) or data
+        start = len(data["problems"])
+        for i, p in enumerate(probs):
+            p["id"] = f"p{start + i + 1}"
+        data["problems"] += probs
+        data["missing_levels"] = [l for l in data.get("missing_levels") or [] if l != level]
+        return _save_codetest(app_id, data)
 
 
 # ---------- the practical assessment: one project, four levels, a clock ----------
@@ -581,7 +641,19 @@ def generate_practical(app_id: str, engine_id: str = "claude:opus", progress=lam
     material = attachments.brief_text(app_id)
     brief = PRACTICAL.format(role=report["role"], company=report["company"], jd=fence(jd[:10000]),
                              material=PRACTICAL_MATERIAL.format(text=fence(material)) if material else "")
-    task = _practical(parse_json_reply(get_engine(engine_id).run(brief, timeout=900)))
+    task = None
+    for attempt in (1, 2):
+        suffix = "" if attempt == 1 else ("\n\nYour previous reply was incomplete or not valid JSON. "
+                                           "Return one complete JSON object only.")
+        try:
+            task = _practical(parse_json_reply(get_engine(engine_id).run(brief + suffix, timeout=900, name="interview.practical")))
+        except EngineError as e:
+            log.warning("practical assessment attempt %s failed: %s", attempt, e)
+            task = None
+        if task:
+            break
+        if attempt == 1:
+            progress("The first reply came back incomplete; asking once more")
     if not task:
         raise RuntimeError("The model's assessment came back incomplete. Try again.")
     return _save_practical(app_id, task, engine_id)
@@ -613,7 +685,7 @@ def review_practical(app_id: str, sub: dict, engine_id: str = "claude:opus", pro
     brief = PRACTICAL_REVIEW.format(company=report["company"], role=report["role"], task=fence(spec[:12000]),
                                     scores=_score_lines(levels) or "not run", used=used, minutes=task["minutes"],
                                     lang=lang, code=fence(code))
-    raw = parse_json_reply(get_engine(engine_id).run(brief, timeout=600))
+    raw = parse_json_reply(get_engine(engine_id).run(brief, timeout=600, name="interview.review"))
     scores = raw.get("scores") if isinstance(raw.get("scores"), dict) else {}
 
     def score(k):

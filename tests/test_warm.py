@@ -43,7 +43,7 @@ def test_referral_ask_is_checked_and_saved(monkeypatch):
     (folder / "plan.json").write_text("{}", "utf-8")
 
     class Eng:
-        def run(self, brief, timeout=0, tools=None):
+        def run(self, brief, timeout=0, tools=None, name=""):
             assert "Asha Iyer" in brief and "<<<" in brief
             return json.dumps({"message": "Hi Asha, I cut costs by 93% at Acme. Would you refer me for the Lead Engineer role?"})
     monkeypatch.setattr(warm, "get_engine", lambda e: Eng())

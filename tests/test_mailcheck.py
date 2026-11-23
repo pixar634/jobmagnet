@@ -27,7 +27,7 @@ def test_check_keeps_checked_metadata_and_offers_status(monkeypatch):
     calls = []
 
     class Eng:
-        def run(self, brief, timeout=0, tools=None):
+        def run(self, brief, timeout=0, tools=None, name=""):
             calls.append((brief, tools))
             return json.dumps(REPLY)
     monkeypatch.setattr(mailcheck, "get_engine", lambda e: Eng())
@@ -58,7 +58,7 @@ def test_an_application_sent_elsewhere_keeps_its_mail_without_a_folder(monkeypat
     (output_dir() / "a2").mkdir(parents=True, exist_ok=True)
 
     class Eng:
-        def run(self, brief, timeout=0, tools=None):
+        def run(self, brief, timeout=0, tools=None, name=""):
             return json.dumps(REPLY)
     monkeypatch.setattr(mailcheck, "get_engine", lambda e: Eng())
     got = mailcheck.check()

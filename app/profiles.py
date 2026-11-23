@@ -68,6 +68,11 @@ def last_used() -> str:
     return ids[0] if ids else ""
 
 
+def active() -> str | None:
+    """The profile pinned on this request or thread, without falling back to the last one used (logging uses this)."""
+    return _active.get()
+
+
 def current() -> str:
     """The profile this request or background job belongs to; the last one used when nothing says."""
     pid = _active.get()
@@ -159,6 +164,8 @@ def delete(pid: str) -> None:
         raise KeyError(pid)
     if p.get("legacy"):
         raise ValueError("This profile lives in data/ and output/; it can't be deleted from the app.")
+    from . import logs
+    logs.close_profile(pid)   # an open log file would keep the folder on Windows
     with _lock:
         idx = _read_index()
         idx["profiles"] = [x for x in idx["profiles"] if x["id"] != pid]

@@ -3,6 +3,7 @@ page polls, so nothing waits on a frozen request."""
 import contextvars
 import datetime as dt
 import threading
+import time
 import traceback
 import uuid
 
@@ -10,8 +11,8 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import (apply, areas, batch, callback, db, discover, extract, insights, letterfile, letters, memory, onboarding,
-               profiles, review, strategy, study, tailor, tracker)
+from . import (apply, areas, batch, callback, db, discover, extract, insights, letterfile, letters, logs, memory,
+               observability, onboarding, profiles, review, strategy, study, tailor, tracker)
 from .config import STATIC, output_dir
 from .engines import ENGINES, EngineError
 from .jd import parse_jd
@@ -21,6 +22,9 @@ from .render import in_thread
 
 app = FastAPI(title="JobMagnet")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+logs.setup()
+log = logs.get_logger("app")
 
 JOBS: dict[str, dict] = {}
 SYNCED: set[str] = set()   # profiles whose local database was synced since the app started
@@ -62,15 +66,44 @@ async def local_only(request: Request, call_next):
 
 
 @app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """One line per request in the profile's log. Polling and static files wait for DEBUG; refusals are warnings."""
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        log.exception("%s %s failed", request.method, request.url.path)
+        raise
+    ms = (time.perf_counter() - started) * 1000
+    path = request.url.path
+    quiet = path.startswith("/static/") or (request.method == "GET" and
+                                            (path.startswith("/api/jobs/") or path == "/api/state"))
+    line, args = "%s %s -> %s (%.0f ms)", (request.method, path, response.status_code, ms)
+    if response.status_code >= 500:
+        log.error(line, *args)
+    elif response.status_code >= 400:
+        log.warning(line, *args)
+    elif quiet:
+        log.debug(line, *args)
+    else:
+        log.info(line, *args)
+    return response
+
+
+@app.middleware("http")
 async def pick_profile(request: Request, call_next):
-    """Whose data this request is about: the profile in the cookie (the last one used when there is none)."""
+    """Whose data this request is about: the profile in the cookie (the last one used when there is none).
+    An API request is also one AI-trace session, so its model calls group together even when no job runs."""
     pid = request.cookies.get(profiles.COOKIE)
     token = profiles.activate(pid if pid and profiles.get(pid) else profiles.last_used() or None)
+    session = observability.bind_session(uuid.uuid4().hex[:12]) if request.url.path.startswith("/api/") else None
     try:
         with callback.serving():   # background guide work waits for it
             return await call_next(request)
     finally:
         profiles.reset(token)
+        if session is not None:
+            observability.reset_session(session)
 
 
 def _default_prefs(profile: dict) -> dict:
@@ -92,14 +125,27 @@ def start_job(kind: str, fn, *args) -> str:
 
     def progress(msg: str):
         job["log"].append({"t": dt.datetime.now().strftime("%H:%M:%S"), "msg": msg})
+        log.debug("job %s: %s", jid, msg)
 
     def target():
-        try:
-            job["result"] = fn(*args, progress)
-            job["status"] = "done"
-        except Exception as e:
-            job["status"], job["error"] = "error", str(e)
-            job["trace"] = traceback.format_exc()[-2000:]
+        token = logs.bind_job(jid)
+        started = time.perf_counter()
+        log.info("job %s started: %s", jid, kind)
+        # Every model call this job makes lands under this trace, keyed by the job id as its session.
+        with observability.trace(kind, session_id=jid, user_id=job["profile"], metadata={"job": jid}) as ai_trace:
+            job["ai_trace"] = ai_trace.id
+            try:
+                job["result"] = fn(*args, progress)
+                job["status"] = "done"
+                ai_trace.output = job["result"]
+                log.info("job %s done in %.1fs", jid, time.perf_counter() - started)
+            except Exception as e:
+                job["status"], job["error"] = "error", str(e)
+                job["trace"] = traceback.format_exc()[-2000:]
+                ai_trace.status, ai_trace.status_message = "error", str(e)[:500]
+                log.exception("job %s (%s) failed", jid, kind)
+            finally:
+                logs.reset_job(token)
 
     # The job belongs to the profile that started it, even if the page switches profile while it runs.
     threading.Thread(target=contextvars.copy_context().run, args=(target,), daemon=True).start()
@@ -150,6 +196,28 @@ def _setup_state(pid: str) -> dict:
     return {"profiles": _profile_list(), "current": pid, "status": row.get("status", ""), "name": row.get("name", ""),
             "setup_job": job["id"] if job and job["status"] == "running" else None,
             "setup_error": job["error"] if job and job["status"] == "error" else None}
+
+
+@app.get("/api/logs")
+def recent_logs(lines: int = 200):
+    """The end of this profile's log file, for the troubleshooting page or a bug report."""
+    return {"path": str(logs.log_path()), "lines": logs.tail(lines)}
+
+
+@app.get("/api/observability")
+def observability_overview(days: int = 7, limit: int = 20):
+    """This profile's model runs: totals for the last `days`, and its latest traces with their generations."""
+    return {"path": str(observability.trace_path()), "summary": observability.summary(max(1, min(days, 365))),
+            "traces": observability.recent(limit, days=max(1, min(days, 365)))}
+
+
+@app.get("/api/observability/{trace_id}")
+def observability_detail(trace_id: str):
+    """One trace: what it was for, every model call in it with tokens, cost and latency, and its scores."""
+    found = observability.get(trace_id)
+    if not found:
+        raise HTTPException(404, "No such trace")
+    return found
 
 
 @app.get("/api/state")

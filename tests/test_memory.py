@@ -14,7 +14,7 @@ class Writer:
     def __init__(self, reply):
         self.reply = reply
 
-    def run(self, brief, timeout=0):
+    def run(self, brief, timeout=0, name=""):
         if isinstance(self.reply, Exception):
             raise self.reply
         return self.reply

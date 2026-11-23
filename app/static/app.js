@@ -1935,9 +1935,46 @@ document.addEventListener("keydown", (e) => {
 // ---------- the coding test: adaptive, LeetCode-style, run in a browser sandbox ----------
 // Solve a problem and the next is a level harder; skip one or look at the solution and the next is a level
 // easier. Each problem's tests are first checked against its reference solution; tests it fails are dropped.
-const CT = { data: null, st: null, cm: null, workers: {}, ready: {}, checked: {}, next: null, timer: null };
+const CT = { data: null, st: null, cm: null, workers: {}, ready: {}, checked: {}, next: null, timer: null, job: null, fill: null };
 const ctKey = (id) => `cv.codetest.${id}`;
 const LANG = { python: "Python", javascript: "JavaScript" };
+// The writer saves each level as it lands, level 2 first, so the test starts as soon as the opening level is ready
+// while the rest is still being generated. CT.job is the writer still running; CT.fill picks up each new level.
+const ctProblems = () => CT.data?.problems || [];
+const ctMissing = () => new Set(CT.data?.missing_levels || []);
+const ctDone = () => new Set(CT.st.history.map((h) => h.id));
+const ctAt = (level) => ctProblems().find((x) => x.level === level && !ctDone().has(x.id) && !CT.checked[`${x.id}:bad`]);
+
+function ctNearest() {   // the closest level with an unused problem, for a test whose opening level never came back
+  const levels = [...new Set(ctProblems().map((p) => p.level))].filter((l) => ctAt(l));
+  return levels.sort((a, b) => Math.abs(a - CT.st.level) - Math.abs(b - CT.st.level) || a - b)[0] || 0;
+}
+
+function ctStatusText() {
+  if (!CT.job) return "";
+  const have = new Set(ctProblems().map((p) => p.level)), missing = ctMissing();
+  const pending = [1, 2, 3, 4, 5].filter((l) => !have.has(l) && !missing.has(l));
+  return pending.length ? `Levels ${pending.map((l) => pad2(l)).join(", ")} being written` : "";
+}
+function ctStatus() { const el = $("#ctStatus"); if (el) el.textContent = ctStatusText(); }
+
+// While the writer runs in the background, take each level as it lands, without leaving the problem on screen.
+function ctFill(job) {
+  clearInterval(CT.fill); CT.fill = null;
+  CT.job = job || null;
+  ctStatus();
+  if (!job) return;
+  const app = IV.sel, token = IV.token;
+  CT.fill = setInterval(async () => {
+    if (IV.tab !== "code" || IV.sel !== app || IV.token !== token || !$("#v-interview").classList.contains("on")) return clearInterval(CT.fill);
+    const r = await api(`/api/apps/${app}/codetest`).catch(() => null);
+    if (!r || IV.tab !== "code" || IV.sel !== app || IV.token !== token) return;
+    if (r.test) CT.data = r.test;
+    CT.job = r.job;
+    ctStatus();
+    if (!r.job) { clearInterval(CT.fill); CT.fill = null; toast("Done writing the coding test.", 3000); }
+  }, 4000);
+}
 
 function ctFresh() {
   return { level: 2, streak: 0, score: 0, history: [], drafts: {}, lang: IV.data?.coding_language || "python", current: null, started: Date.now() };
@@ -1945,13 +1982,20 @@ function ctFresh() {
 const ctSave = () => store.set(ctKey(IV.sel), CT.st);
 
 async function ctOpen() {
-  const token = IV.token;
-  const r = await api(`/api/apps/${IV.sel}/codetest`);
-  if (token !== IV.token || IV.tab !== "code") return;
+  const app = IV.sel, token = IV.token;
+  const r = await api(`/api/apps/${app}/codetest`);
+  if (token !== IV.token || IV.sel !== app || IV.tab !== "code") return;
   CT.data = r.test; CT.st = store.get(ctKey(IV.sel), null) || ctFresh(); CT.next = null;
-  if (r.job) return ctWait(r.job, "Writing your coding test");
-  if (!CT.data) return ctIntro();
-  ctNext();
+  ctFill(r.job);
+  if (ctAt(CT.st.level)) return ctNext();   // start now: the other levels are written while you work
+  if (r.job) return ctGenerate(r.job, "Writing your coding test, level 02 first");
+  if (!ctProblems().length) return ctIntro();
+  if (!CT.st.history.length && ctNearest()) {   // level 2 never came back: start on the nearest level written
+    CT.st.level = ctNearest(); ctSave();
+    toast(`Level ${pad2(CT.st.level)} is the one ready, so the test starts there.`, 4500);
+    return ctNext();
+  }
+  ctNext();   // the level ran dry: ask for two more there
 }
 
 function ctHud(inner, controls) {
@@ -1961,7 +2005,7 @@ function ctHud(inner, controls) {
 
 function ctBar() {
   const s = CT.st;
-  return `<div class="hud__bar"><span>Coding test · Level ${pad2(s.level)} / 05 · Streak ${s.streak}</span><span>Score ${s.score} · <span id="ctClock">00:00</span></span></div>
+  return `<div class="hud__bar"><span>Coding test · Level ${pad2(s.level)} / 05 · Streak ${s.streak}</span><span><span class="hud-mono" id="ctStatus">${esc(ctStatusText())}</span> Score ${s.score} · <span id="ctClock">00:00</span></span></div>
     <div class="hud__segs" id="ctSegs">${[1, 2, 3, 4, 5].map((l) => `<i class="${l < s.level ? "done" : l === s.level ? "cur" : ""}"></i>`).join("")}</div>`;
 }
 
@@ -1979,26 +2023,47 @@ function ctIntro() {
       <span class="hud-mono" data-flow-in>Online assessment</span>
       <h2 class="flow-title" data-scramble>An adaptive coding test, set for this job.</h2>
       <p class="type-body" data-flow-in>Like a real online assessment. You start at level 2: solve a problem and the next one is a level harder; skip one and it eases off. Write in Python or JavaScript. Your code runs right here against hidden tests, in a sandbox that can't touch the network or your files.</p>
+      <p class="type-meta" data-flow-in>Level 2 is written first, so you can start in about a minute; the other levels are written in the background while you work.</p>
       <div class="iv-stats" data-flow-in>
         <div class="stat"><span class="eyebrow">Levels</span><span class="stat__value num">5</span></div>
         <div class="stat"><span class="eyebrow">Problems</span><span class="stat__value num">10</span></div>
-        <div class="stat"><span class="eyebrow">Writing it takes</span><span class="stat__value num">2–5<small> min</small></span></div></div>
+        <div class="stat"><span class="eyebrow">Level 2 ready in</span><span class="stat__value num">~1<small> min</small></span></div></div>
       <div data-flow-in><button class="btn btn--accent btn--lg" id="ctGen">Write my coding test ${ICON.arrow}</button></div></div>`, 1);
   $("#ctGen").onclick = async () => {
-    try { const { job } = await api(`/api/apps/${IV.sel}/codetest`, { body: {} }); ctWait(job, "Writing your coding test"); }
+    try { const { job } = await api(`/api/apps/${IV.sel}/codetest`, { body: {} }); ctGenerate(job, "Writing your coding test, level 02 first"); }
     catch (e) { toast(e.message, 5000); }
   };
 }
 
-async function ctWait(job, title) {
-  const token = IV.token;
+// Wait on the writer only until the opening level is usable: then the test starts and the rest fills in behind it.
+async function ctGenerate(job, title) {
+  const app = IV.sel, token = IV.token;
+  CT.st = CT.st || store.get(ctKey(app), null) || ctFresh();
+  CT.job = job;
   ctHud(`<div class="hud__bar"><span>Coding test · ${esc(IV.data.company)}</span><span id="ivClock">00:00</span></div>${missionLog(title)}`);
   FX.flowIn($("#ivPanel .hud"));
   const stop = await runClock(job, $("#ivClock"));
-  try { await pollJob(job, (l) => logLine(token, l.msg, l.t)); }
-  catch (e) { toast(e.message, 5000); }
+  let seen = 0;
+  for (;;) {
+    const j = await api(`/api/jobs/${job}`).catch(() => null);
+    if (!j) break;
+    for (; seen < j.log.length; seen++) logLine(token, j.log[seen].msg, j.log[seen].t);
+    if (j.status === "error") { toast(j.error, 6000); break; }
+    const r = await api(`/api/apps/${app}/codetest`).catch(() => null);
+    if (r?.test) { CT.data = r.test; ctStatus(); }
+    if (ctAt(CT.st.level)) break;   // the opening level is in
+    if (j.status === "done") break;
+    if (token !== IV.token || IV.sel !== app || IV.tab !== "code" || !$("#v-interview").classList.contains("on")) return stop();
+    await sleep(1200);
+  }
   stop();
-  if (token === IV.token && IV.tab === "code") ctOpen();
+  if (token !== IV.token || IV.sel !== app || IV.tab !== "code" || !$("#v-interview").classList.contains("on")) return;
+  if (ctAt(CT.st.level)) {
+    ctFill(job);
+    toast(`Level ${pad2(CT.st.level)} is ready. The other levels are written while you work.`, 4500);
+    return ctNext();
+  }
+  ctOpen();
 }
 
 // ---- the sandbox ----
@@ -2049,12 +2114,19 @@ async function ctTests(p, lang) {
 
 // ---- choosing and showing a problem ----
 async function ctNext() {
-  const s = CT.st, done = new Set(s.history.map((h) => h.id));
-  let p = s.current && CT.data.problems.find((x) => x.id === s.current);
-  if (!p) p = CT.data.problems.find((x) => x.level === s.level && !done.has(x.id) && !CT.checked[`${x.id}:bad`]);
+  const s = CT.st;
+  let p = s.current && ctProblems().find((x) => x.id === s.current);
+  if (!p) p = ctAt(s.level);
   if (!p) {
-    const { job } = await api(`/api/apps/${IV.sel}/codetest`, { body: { level: s.level } });
-    return ctWait(job, `You've used every level ${s.level} problem. Writing two more.`);
+    if (!s.history.length && ctNearest()) {   // the opening level never came back: start on the nearest level written
+      s.level = ctNearest(); ctSave();
+      return ctNext();
+    }
+    try {
+      if (CT.job) return ctGenerate(CT.job, `You've used every level ${s.level} problem. Waiting for the batch already being written.`);
+      const { job } = await api(`/api/apps/${IV.sel}/codetest`, { body: { level: s.level } });
+      return ctGenerate(job, `You've used every level ${s.level} problem. Writing two more.`);
+    } catch (e) { toast(e.message, 5000); return ctIntro(); }
   }
   if (!CT.checked[`${p.id}:${s.lang}`]) {
     ctHud(ctBar() + `<div class="hud__stage" id="ctStage"></div>`);

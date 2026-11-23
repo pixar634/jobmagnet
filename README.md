@@ -373,7 +373,9 @@ prep or a cold email, find contacts, or **export everything to Excel**.
 - **Three rounds planned like the real thing**: a screen, the deep round, and a leadership and culture round built on the company's own values.
 - **Model answers from your real experience**, in the first person, honest about gaps.
 - **Adaptive practice**, one question at a time, harder as you get them right.
-- **An adaptive coding test** for coding roles: ten problems in Python or JavaScript, run in a sandbox in your browser.
+- **An adaptive coding test** for coding roles: ten problems in Python or JavaScript, run in a sandbox in your
+  browser. Level 2 is written first, so the test starts in about a minute while the other levels are written in the
+  background.
 - **A practical assessment** in the shape of CodeSignal's take-homes: one project built up over four levels against
   the clock, hidden tests at submit, then a review of your code on what reviewers grade. A built-in sample needs no AI.
 
@@ -453,6 +455,8 @@ Sites whose terms forbid automated access (LinkedIn, Naukri, Glassdoor and other
 | Port 8765 is already in use | JobMagnet is already running: open http://127.0.0.1:8765. |
 | Scan Indeed or Gmail drafts fail | Sign in to Claude with a subscription and turn on the connector at claude.ai → Settings → Connectors. |
 | The extension says it can't reach the app | Start JobMagnet first; the extension only talks to http://127.0.0.1:8765. |
+| A job fails, or you need to report a bug | Each profile writes `jobmagnet.log` in its data folder (rotated at 1 MB, three backups). Open http://127.0.0.1:8765/api/logs for the current profile's tail, or set `JOBMAGNET_LOG_LEVEL=DEBUG` before starting for job progress and per-request lines. |
+| You wonder what a job asked the model, or what it cost | Each profile writes `ai_traces.jsonl` in its data folder (rotated at 8 MB, three backups): one trace per job, one record per model call, with its brief, reply, tokens, cost and latency. `python scripts/traces.py` lists the last traces, `--summary` adds up the past week, `--id <id>` opens one model call by call. http://127.0.0.1:8765/api/observability serves the same as JSON. Set `JOBMAGNET_OBSERVABILITY=0` before starting to record nothing; it is all local. |
 
 Still stuck? [Open a bug report](https://github.com/pixar634/jobmagnet/issues/new/choose), without personal details.
 
@@ -471,6 +475,8 @@ Still stuck? [Open a bug report](https://github.com/pixar634/jobmagnet/issues/ne
 | `app/career.py` | The career map |
 | `app/memory.py`, `app/untrusted.py` | Your memory of what the CV leaves out; keeping job postings as data, never instructions |
 | `app/db.py`, `scripts/query.py` | The local SQLite record (`jobmagnet.db` in each profile's data folder): every status change, plus copies of everything else to query: applications, Discover's jobs, the profile with its memory and settings, the career map, salary and growth logs, cold mails, contacts and interview prep. `python scripts/query.py --tables` lists them; `--all` queries every profile together |
+| `app/logs.py` | Console and per-profile rotating logs, tagged with the profile and background job (`jobmagnet.log` beside the profile's data) |
+| `app/observability.py`, `scripts/traces.py` | Local AI traces, in the shape of Langfuse: a trace per job, a generation per model call, with tokens, cost and latency (`ai_traces.jsonl` beside the profile's data) |
 | `app/apply.py` | Answers for an application form: profile facts by code, the rest by the model, saved answers reused |
 | `app/engines.py` | Running Claude Code and the Gemini CLI |
 | `app/static/` | The web UI: plain JavaScript and CSS, no build step. The design system runs `tokens.css` → `base.css` → `components.css` → `views.css` |

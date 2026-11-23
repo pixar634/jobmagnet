@@ -21,7 +21,7 @@ class FakeEngine:
     def available(self):
         return True
 
-    def run(self, brief, timeout=0, tools=None):
+    def run(self, brief, timeout=0, tools=None, name=""):
         self.briefs.append(brief)
         reply = self.replies.pop(0) if self.replies else {"verdict": "apply", "why": "Meets every must-have"}
         if isinstance(reply, Exception):

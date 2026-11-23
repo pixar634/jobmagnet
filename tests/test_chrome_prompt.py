@@ -21,7 +21,7 @@ def test_web_search_briefs_carry_the_steer(monkeypatch):
     briefs = []
 
     class Eng:
-        def run(self, brief, timeout=0, tools=None):
+        def run(self, brief, timeout=0, tools=None, name=""):
             briefs.append(brief)
             return '{"jobs": []}'
     monkeypatch.setitem(discover.ENGINES, "claude:sonnet", Eng())
