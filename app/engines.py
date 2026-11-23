@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Protocol
 
-from . import logs
+from . import logs, observability
 
 log = logs.get_logger("engine")
 
@@ -44,7 +44,7 @@ class Engine(Protocol):
     label: str
 
     def available(self) -> bool: ...
-    def run(self, brief: str, timeout: int = 420, tools: list[str] | None = None) -> str: ...
+    def run(self, brief: str, timeout: int = 420, tools: list[str] | None = None, name: str = "") -> str: ...
 
 
 def _run(cmd: list[str], brief: str, timeout: int, env: dict | None = None) -> subprocess.CompletedProcess:
@@ -70,43 +70,55 @@ class ClaudeCLI:
     def available(self) -> bool:
         return shutil.which("claude") is not None
 
-    def run(self, brief: str, timeout: int = 420, tools: list[str] | None = None) -> str:
+    def run(self, brief: str, timeout: int = 420, tools: list[str] | None = None, name: str = "") -> str:
         """`tools` is ["WebSearch"] for research runs, the Gmail connector's create_draft for saving a cold email, or
-        its search_threads and get_thread for the read-only inbox check; writing runs get no tools at all."""
-        exe = shutil.which("claude")
-        if not exe:
-            raise EngineError("The claude CLI is not on PATH.")
+        its search_threads and get_thread for the read-only inbox check; writing runs get no tools at all.
+        The run is recorded as one generation of the current AI trace, with the CLI's own token and cost figures."""
         tools = tools or []
-        connector = [t for t in tools if t.startswith("mcp__")]
-        builtin = ",".join(t for t in tools if not t.startswith("mcp__"))
-        cmd = [exe, "-p", INSTRUCTION, "--output-format", "json", "--model", self.model,
-               "--tools", builtin, "--system-prompt", SYSTEM, "--no-session-persistence",
-               "--permission-prompts", "none", "--effort", "medium" if tools else "high"]
-        run_env = None
-        if connector:
-            # Safe mode hides every connector, so a connector run goes without it and is fenced instead: only the
-            # named tool is pre-approved (with prompts off, anything else is refused), and Gmail's sending,
-            # deleting and reading tools are blocked outright as a second guard.
-            cmd += ["--allowedTools", ",".join(connector), "--disallowedTools", ",".join(t for t in GMAIL_BLOCKED if t not in connector)]
-            # A headless run starts the model while claude.ai connectors are still connecting, so the tool isn't
-            # there yet and the model writes the call out as text; wait for them instead.
-            run_env = os.environ | {"MCP_CONNECTION_NONBLOCKING": "false"}
-        else:
-            cmd.append("--safe-mode")
-            if tools:
-                cmd += ["--allowedTools", builtin]
-        log.info("Claude %s run (%s)", self.model, ", ".join(tools) or "no tools")
-        proc = _run(cmd, brief, timeout, run_env)
-        try:
-            env = json.loads(proc.stdout)
-        except json.JSONDecodeError:
-            log.warning("Claude CLI returned no JSON envelope")
-            raise EngineError(f"Claude CLI returned no JSON envelope. stderr: {proc.stderr[-800:]}"
-                              f" stdout: {proc.stdout[-800:]}")
-        if env.get("is_error") or proc.returncode != 0:
-            log.warning("Claude CLI error (exit %s)", proc.returncode)
-            raise EngineError(f"Claude CLI error: {str(env.get('result') or proc.stderr)[-800:]}")
-        return env.get("result", "")
+        with observability.generation(name or observability.trace_name(), engine=self.id, model=self.model,
+                                      input=brief, metadata={"tools": tools}) as gen:
+            exe = shutil.which("claude")
+            if not exe:
+                raise EngineError("The claude CLI is not on PATH.")
+            connector = [t for t in tools if t.startswith("mcp__")]
+            builtin = ",".join(t for t in tools if not t.startswith("mcp__"))
+            cmd = [exe, "-p", INSTRUCTION, "--output-format", "json", "--model", self.model,
+                   "--tools", builtin, "--system-prompt", SYSTEM, "--no-session-persistence",
+                   "--permission-prompts", "none", "--effort", "medium" if tools else "high"]
+            run_env = None
+            if connector:
+                # Safe mode hides every connector, so a connector run goes without it and is fenced instead: only the
+                # named tool is pre-approved (with prompts off, anything else is refused), and Gmail's sending,
+                # deleting and reading tools are blocked outright as a second guard.
+                cmd += ["--allowedTools", ",".join(connector), "--disallowedTools", ",".join(t for t in GMAIL_BLOCKED if t not in connector)]
+                # A headless run starts the model while claude.ai connectors are still connecting, so the tool isn't
+                # there yet and the model writes the call out as text; wait for them instead.
+                run_env = os.environ | {"MCP_CONNECTION_NONBLOCKING": "false"}
+            else:
+                cmd.append("--safe-mode")
+                if tools:
+                    cmd += ["--allowedTools", builtin]
+            log.info("Claude %s run (%s)", self.model, ", ".join(tools) or "no tools")
+            proc = _run(cmd, brief, timeout, run_env)
+            try:
+                env = json.loads(proc.stdout)
+            except json.JSONDecodeError:
+                log.warning("Claude CLI returned no JSON envelope")
+                raise EngineError(f"Claude CLI returned no JSON envelope. stderr: {proc.stderr[-800:]}"
+                                  f" stdout: {proc.stdout[-800:]}")
+            if env.get("is_error") or proc.returncode != 0:
+                log.warning("Claude CLI error (exit %s)", proc.returncode)
+                raise EngineError(f"Claude CLI error: {str(env.get('result') or proc.stderr)[-800:]}")
+            usage = env.get("usage") or {}
+            gen.add_usage(input=usage.get("input_tokens"), output=usage.get("output_tokens"),
+                          cache_read=usage.get("cache_read_input_tokens"),
+                          cache_creation=usage.get("cache_creation_input_tokens"))
+            gen.set_cost(env.get("total_cost_usd"), source="cli")
+            gen.metadata |= {"duration_ms": env.get("duration_ms"), "turns": env.get("num_turns"),
+                             "cli_session": env.get("session_id")}
+            text = env.get("result", "")
+            gen.set_output(text)
+            return text
 
 
 GEMINI_TOOLS = ["google_web_search", "web_fetch", "read_file", "read_many_files", "list_directory", "glob",
@@ -156,43 +168,52 @@ class GeminiCLI:
             self._entry = _gemini_entry() or False
         return bool(self._entry) and shutil.which("node") is not None
 
-    def run(self, brief: str, timeout: int = 420, tools: list[str] | None = None) -> str:
-        if not self.available():
-            raise EngineError("Gemini CLI is not installed (npm install -g @google/gemini-cli).")
-        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
-            f.write(SYSTEM)
-            system_path = f.name
-        try:
-            # Plan mode still allows web search, web fetch, file reads, MCP and skills: with job text in the brief, a
-            # search query could carry your profile out. The brief needs none of them, so every tool is switched off.
-            env = os.environ | {"GEMINI_SYSTEM_MD": system_path, "GEMINI_CLI_SYSTEM_SETTINGS_PATH": str(_gemini_no_tools())}
-            cmd = [shutil.which("node"), str(self._entry), "-p", INSTRUCTION, "-o", "json",
-                   "--approval-mode", "plan", "--skip-trust"]
-            if self.model:
-                cmd += ["-m", self.model]
-            log.info("Gemini %s run (%s)", self.model or "default", ", ".join(tools) or "no tools")
-            proc = _run(cmd, brief, timeout, env=env)
-        finally:
-            os.unlink(system_path)
-        if "IneligibleTierError" in proc.stderr or "no longer supported for Gemini Code Assist" in proc.stderr:
-            log.warning("Gemini CLI can no longer run on a personal Google sign-in")
-            raise EngineError("Google no longer lets Gemini CLI run on a personal Google sign-in (it moved individuals "
-                              "to Antigravity). Switch to Claude at the top, or add a Gemini API key from Google AI "
-                              "Studio to use Gemini here.")
-        try:
-            payload = json.loads(proc.stdout[proc.stdout.find("{"):])
-        except json.JSONDecodeError:
-            log.warning("Gemini CLI returned no JSON")
-            hint = " Run `gemini` once in a terminal to sign in with Google." if "auth" in (proc.stderr + proc.stdout).lower() else ""
-            raise EngineError(f"Gemini CLI returned no JSON.{hint} stderr: {proc.stderr[-800:]}")
-        if payload.get("error"):
-            log.warning("Gemini CLI error")
-            msg = json.dumps(payload["error"])
-            if "auth method" in msg.lower():
-                raise EngineError("Gemini CLI is not signed in. Open a terminal, run `gemini`, choose "
-                                  "'Sign in with Google' with your subscription account, then try again.")
-            raise EngineError(f"Gemini CLI error: {msg[:800]}")
-        return payload.get("response", "")
+    def run(self, brief: str, timeout: int = 420, tools: list[str] | None = None, name: str = "") -> str:
+        tools = tools or []
+        with observability.generation(name or observability.trace_name(), engine=self.id, model=self.model,
+                                      input=brief, metadata={"tools": tools}) as gen:
+            if not self.available():
+                raise EngineError("Gemini CLI is not installed (npm install -g @google/gemini-cli).")
+            with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
+                f.write(SYSTEM)
+                system_path = f.name
+            try:
+                # Plan mode still allows web search, web fetch, file reads, MCP and skills: with job text in the brief, a
+                # search query could carry your profile out. The brief needs none of them, so every tool is switched off.
+                env = os.environ | {"GEMINI_SYSTEM_MD": system_path, "GEMINI_CLI_SYSTEM_SETTINGS_PATH": str(_gemini_no_tools())}
+                cmd = [shutil.which("node"), str(self._entry), "-p", INSTRUCTION, "-o", "json",
+                       "--approval-mode", "plan", "--skip-trust"]
+                if self.model:
+                    cmd += ["-m", self.model]
+                log.info("Gemini %s run (%s)", self.model or "default", ", ".join(tools) or "no tools")
+                proc = _run(cmd, brief, timeout, env=env)
+            finally:
+                os.unlink(system_path)
+            if "IneligibleTierError" in proc.stderr or "no longer supported for Gemini Code Assist" in proc.stderr:
+                log.warning("Gemini CLI can no longer run on a personal Google sign-in")
+                raise EngineError("Google no longer lets Gemini CLI run on a personal Google sign-in (it moved individuals "
+                                  "to Antigravity). Switch to Claude at the top, or add a Gemini API key from Google AI "
+                                  "Studio to use Gemini here.")
+            try:
+                payload = json.loads(proc.stdout[proc.stdout.find("{"):])
+            except json.JSONDecodeError:
+                log.warning("Gemini CLI returned no JSON")
+                hint = " Run `gemini` once in a terminal to sign in with Google." if "auth" in (proc.stderr + proc.stdout).lower() else ""
+                raise EngineError(f"Gemini CLI returned no JSON.{hint} stderr: {proc.stderr[-800:]}")
+            if payload.get("error"):
+                log.warning("Gemini CLI error")
+                msg = json.dumps(payload["error"])
+                if "auth method" in msg.lower():
+                    raise EngineError("Gemini CLI is not signed in. Open a terminal, run `gemini`, choose "
+                                      "'Sign in with Google' with your subscription account, then try again.")
+                raise EngineError(f"Gemini CLI error: {msg[:800]}")
+            for model_stats in ((payload.get("stats") or {}).get("models") or {}).values():
+                tokens = model_stats.get("tokens") or {}
+                gen.add_usage(input=tokens.get("input"), output=tokens.get("candidates") or tokens.get("output"),
+                              total=tokens.get("total"), cache_read=tokens.get("cached"))
+            text = payload.get("response", "")
+            gen.set_output(text)
+            return text
 
 
 ENGINES: dict[str, Engine] = {e.id: e for e in (ClaudeCLI("opus"), ClaudeCLI("sonnet"), GeminiCLI())}

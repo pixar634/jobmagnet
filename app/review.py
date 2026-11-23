@@ -94,7 +94,7 @@ def judge(job: dict, ctx: dict, engine_id: str = "") -> dict:
     """{"verdict", "why"} for one posting. Raises EngineError (a usage limit included) for the caller to handle."""
     brief = BRIEF.format(**ctx, title=fence(job.get("title") or ""), company=fence(job.get("company") or ""),
                          location=fence(job.get("location") or ""), description=fence((job.get("description") or "")[:9000]))
-    reply = parse_json_reply(get_engine(engine_id or light_engine()).run(brief, timeout=150))
+    reply = parse_json_reply(get_engine(engine_id or light_engine()).run(brief, timeout=150, name="review.judge"))
     verdict = str(reply.get("verdict") or "").lower().strip()
     if verdict not in VERDICTS:
         raise EngineError(f"The review gave no verdict: {str(reply)[:200]}")

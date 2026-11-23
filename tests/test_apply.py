@@ -27,7 +27,7 @@ class FakeEngine:
     def __init__(self, reply):
         self.reply, self.briefs = reply, []
 
-    def run(self, brief, timeout=420, tools=None):
+    def run(self, brief, timeout=420, tools=None, name=""):
         self.briefs.append(brief)
         return json.dumps(self.reply)
 

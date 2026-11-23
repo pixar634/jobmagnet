@@ -83,7 +83,8 @@ def check(engine_id: str = "claude:sonnet", progress=lambda m: None) -> dict:
              "link": r.get("job_url") or ""} for r in rows]
     progress(f"Reading your Gmail for {len(rows)} application{'s' if len(rows) != 1 else ''} (read-only)")
     raw = parse_json_reply(get_engine(engine_id).run(
-        BRIEF.format(apps=fence(json.dumps(apps, ensure_ascii=False)), since=since.replace("-", "/")), timeout=420, tools=TOOLS))
+        BRIEF.format(apps=fence(json.dumps(apps, ensure_ascii=False)), since=since.replace("-", "/")), timeout=420,
+        tools=TOOLS, name="mail.applications"))
     ids = {r["id"] for r in rows}
     found: dict[str, list[dict]] = {}
     for m in raw.get("matches") or []:
@@ -145,7 +146,7 @@ def inbound(engine_id: str = "claude:sonnet", prefs: dict | None = None, days: i
     since = (dt.date.today() - dt.timedelta(days=days)).isoformat()
     progress("Reading recruiters' emails about jobs (read-only)")
     raw = parse_json_reply(get_engine(engine_id).run(INBOUND.format(since=since.replace("-", "/"), limit=limit),
-                                                     timeout=600, tools=TOOLS))
+                                                     timeout=600, tools=TOOLS, name="mail.recruiters"))
     jobs = []
     for r in raw.get("jobs") or []:
         if not isinstance(r, dict) or not str(r.get("title") or "").strip() or not _gmail_url(r.get("url")):

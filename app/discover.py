@@ -437,7 +437,7 @@ def from_page(url: str, engine_id: str = "") -> tuple[str, list[dict]]:
     links = {l["h"]: l["t"] for l in page["links"]}
     link_lines = "\n".join(f"{t} -> {h}" for h, t in list(links.items())[:600] if t)
     brief = f"{EXTRACT_BRIEF}\n\nPAGE: {url}\nTITLE: {fence(page['title'])}\n\nTEXT:\n<<<\n{fence(page['text'][:24000])}\n>>>\n\nLINKS:\n{link_lines}"
-    raw = parse_json_reply(ENGINES[engine_id].run(brief, timeout=90))
+    raw = parse_json_reply(ENGINES[engine_id].run(brief, timeout=90, name="discover.read_page"))
     out = []
     for j in raw.get("jobs") or []:
         u = j.get("url", "")
@@ -469,7 +469,8 @@ def _steer() -> str:
 
 def from_websearch(query: str, days: int) -> tuple[str, list[dict]]:
     eng = ENGINES["claude:sonnet"]
-    raw = parse_json_reply(eng.run(WEB_BRIEF.format(query=query, days=days, steer=_steer()), timeout=170, tools=["WebSearch"]))
+    raw = parse_json_reply(eng.run(WEB_BRIEF.format(query=query, days=days, steer=_steer()), timeout=170,
+                                   tools=["WebSearch"], name="discover.web_search"))
     out = [_job(j.get("title"), j.get("company"), j.get("location"), j.get("url"), parse_posted(j.get("posted", "")),
                 j.get("posted", ""), description=j.get("why", ""), method="web search (verify)")
            for j in raw.get("jobs") or [] if j.get("url", "").startswith("http")]
@@ -511,7 +512,7 @@ def from_indeed(value: str, days: int) -> tuple[str, list[dict]]:
     brief = INDEED_BRIEF.format(query=query, location=location or home["city"] or home["country"],
                                 cc=home["country_code"], n=INDEED_DETAILS)
     for attempt in (1, 2):
-        raw = parse_json_reply(eng.run(brief, timeout=420, tools=INDEED_TOOLS))
+        raw = parse_json_reply(eng.run(brief, timeout=420, tools=INDEED_TOOLS, name="discover.indeed"))
         err = str(raw.get("error") or "")
         if raw.get("jobs") or not err:
             break
@@ -590,7 +591,7 @@ def from_people(value: str, days: int) -> tuple[str, list[dict]]:
     lines = "\n".join(f"- {p['name']}" + (f", {p['company']}" if p["company"] else "") + (f" ({p['url']})" if p["url"] else "")
                       for p in people)
     raw = parse_json_reply(ENGINES["claude:sonnet"].run(PEOPLE_BRIEF.format(days=days, people=lines, steer=_steer()), timeout=170,
-                                                        tools=["WebSearch"]))
+                                                        tools=["WebSearch"], name="discover.people"))
     out = [_job(j.get("title"), j.get("company"), j.get("location"), j.get("url"), parse_posted(j.get("posted", "")),
                 j.get("posted", ""), description=j.get("why", ""), method="people you follow (verify)")
            for j in raw.get("jobs") or [] if j.get("url", "").startswith("http")]

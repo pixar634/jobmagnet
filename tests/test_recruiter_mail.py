@@ -24,7 +24,7 @@ def engine(monkeypatch):
     briefs = []
 
     class Eng:
-        def run(self, brief, timeout=0, tools=None):
+        def run(self, brief, timeout=0, tools=None, name=""):
             briefs.append((brief, tools))
             return json.dumps(REPLY)
     monkeypatch.setattr(mailcheck, "get_engine", lambda e: Eng())

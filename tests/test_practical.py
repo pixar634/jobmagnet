@@ -101,7 +101,7 @@ def test_the_writer_gets_the_files_fenced_and_a_bad_reply_is_refused(app_id, mon
     briefs, replies = [], [json.dumps(_raw(minutes=60)), json.dumps({"levels": []})]
 
     class Writer:
-        def run(self, brief, timeout=0, tools=None):
+        def run(self, brief, timeout=0, tools=None, name=""):
             briefs.append(brief)
             return replies.pop(0)
     monkeypatch.setattr(interview, "get_engine", lambda e: Writer())
@@ -121,7 +121,7 @@ def test_a_review_is_scored_fenced_and_kept_with_the_attempt(app_id, monkeypatch
     briefs = []
 
     class Reviewer:
-        def run(self, brief, timeout=0, tools=None):
+        def run(self, brief, timeout=0, tools=None, name=""):
             briefs.append(brief)
             return json.dumps({"verdict": "Passes level 3, not level 4.",
                                "scores": {"breakdown": 4, "readability": 9, "complexity": "n/a", "explanation": 2},

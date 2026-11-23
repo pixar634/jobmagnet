@@ -33,6 +33,11 @@ def bind_job(job_id: str) -> contextvars.Token:
     return _job.set(job_id)
 
 
+def current_job() -> str | None:
+    """The background job this thread belongs to, if any (the AI trace uses it as its session)."""
+    return _job.get()
+
+
 def reset_job(token: contextvars.Token) -> None:
     _job.reset(token)
 

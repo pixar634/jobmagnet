@@ -344,7 +344,7 @@ def _research(company: str, role: str, jd: str, progress, material: str = "", fi
              + (f", following up what your {len(files)} file(s) mention" if files else "") + " (1 to 3 minutes)")
     extra = RESEARCH_MATERIAL.format(text=fence(material)) if material else ""
     reply = get_engine("claude:sonnet").run(RESEARCH.format(company=company, role=role, jd=fence(jd[:12000]), material=extra),
-                                            timeout=600, tools=["WebSearch"])
+                                            timeout=600, tools=["WebSearch"], name="interview.research")
     raw = parse_json_reply(reply)
     return {"from_files": files or [],
             "summary": str(raw.get("summary") or "").strip(), "team_guess": str(raw.get("team_guess") or "").strip(),
@@ -400,7 +400,7 @@ def generate(app_id: str, options: dict, engine_id: str = "claude:opus", progres
         jd=fence(jd[:12000]), plan=json.dumps(plan, indent=1, ensure_ascii=False)[:12000],
         profile=json.dumps(brief_view(profile), ensure_ascii=False)[:20000])
     # The writer follows the top bar's choice; the research above always runs on Claude, which has web search.
-    raw = parse_json_reply(get_engine(engine_id).run(brief, timeout=900))
+    raw = parse_json_reply(get_engine(engine_id).run(brief, timeout=900, name="interview.prep"))
 
     coding = bool(raw.get("needs_coding"))
     rounds = []
@@ -438,7 +438,7 @@ def write_say(app_id: str, round_id: str, engine_id: str = "claude:opus", progre
         brief = SAY.format(role=d["role"], company=d["company"], say_rules=SAY_RULES,
                            questions=json.dumps([{"i": i, "q": q["q"], "kind": q["kind"], "points": q["answer"]} for i, q in todo], indent=1, ensure_ascii=False),
                            profile=json.dumps(brief_view(load_profile()), ensure_ascii=False)[:20000])
-        raw = parse_json_reply(get_engine(engine_id).run(brief, timeout=600))
+        raw = parse_json_reply(get_engine(engine_id).run(brief, timeout=600, name="interview.say"))
         for a in raw.get("answers") or []:
             try:
                 i = int(a.get("i"))
@@ -480,7 +480,7 @@ def _write_problems(report: dict, jd: str, engine_id: str, n: int, avoid: list[s
     if only_level:
         note += f"\nThis time write {n} problems at level {only_level} only."
     brief = CODETEST.format(role=report["role"], company=report["company"], n=n, avoid=note, jd=fence(jd[:10000]))
-    raw = parse_json_reply(get_engine(engine_id).run(brief, timeout=900))
+    raw = parse_json_reply(get_engine(engine_id).run(brief, timeout=900, name="interview.codetest"))
     probs = [x for x in (_problem(p) for p in raw.get("problems") or []) if x]
     return [p for p in probs if not only_level or p["level"] == only_level]
 
@@ -581,7 +581,7 @@ def generate_practical(app_id: str, engine_id: str = "claude:opus", progress=lam
     material = attachments.brief_text(app_id)
     brief = PRACTICAL.format(role=report["role"], company=report["company"], jd=fence(jd[:10000]),
                              material=PRACTICAL_MATERIAL.format(text=fence(material)) if material else "")
-    task = _practical(parse_json_reply(get_engine(engine_id).run(brief, timeout=900)))
+    task = _practical(parse_json_reply(get_engine(engine_id).run(brief, timeout=900, name="interview.practical")))
     if not task:
         raise RuntimeError("The model's assessment came back incomplete. Try again.")
     return _save_practical(app_id, task, engine_id)
@@ -613,7 +613,7 @@ def review_practical(app_id: str, sub: dict, engine_id: str = "claude:opus", pro
     brief = PRACTICAL_REVIEW.format(company=report["company"], role=report["role"], task=fence(spec[:12000]),
                                     scores=_score_lines(levels) or "not run", used=used, minutes=task["minutes"],
                                     lang=lang, code=fence(code))
-    raw = parse_json_reply(get_engine(engine_id).run(brief, timeout=600))
+    raw = parse_json_reply(get_engine(engine_id).run(brief, timeout=600, name="interview.review"))
     scores = raw.get("scores") if isinstance(raw.get("scores"), dict) else {}
 
     def score(k):
