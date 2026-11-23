@@ -7,8 +7,13 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Protocol
+
+from . import logs
+
+log = logs.get_logger("engine")
 
 SYSTEM = ("You work for one job seeker: writing, research, job search or form filling, as the brief says. Follow the brief in the user message "
           "exactly. Reply with one JSON object only: no prose, no markdown fences. "
@@ -44,12 +49,16 @@ class Engine(Protocol):
 
 def _run(cmd: list[str], brief: str, timeout: int, env: dict | None = None) -> subprocess.CompletedProcess:
     with tempfile.TemporaryDirectory(prefix="jobmagnet-") as cwd:
+        started = time.perf_counter()
         try:
-            return subprocess.run(cmd, input=brief, capture_output=True, text=True, encoding="utf-8",
+            proc = subprocess.run(cmd, input=brief, capture_output=True, text=True, encoding="utf-8",
                                   errors="replace", timeout=timeout, cwd=cwd, env=env,
                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except subprocess.TimeoutExpired as e:
+            log.warning("model run timed out after %ss", timeout)
             raise EngineError(f"The model took longer than {timeout}s. Try again, or switch engine.") from e
+        log.debug("model run exited %s in %.1fs", proc.returncode, time.perf_counter() - started)
+        return proc
 
 
 class ClaudeCLI:
@@ -86,13 +95,16 @@ class ClaudeCLI:
             cmd.append("--safe-mode")
             if tools:
                 cmd += ["--allowedTools", builtin]
+        log.info("Claude %s run (%s)", self.model, ", ".join(tools) or "no tools")
         proc = _run(cmd, brief, timeout, run_env)
         try:
             env = json.loads(proc.stdout)
         except json.JSONDecodeError:
+            log.warning("Claude CLI returned no JSON envelope")
             raise EngineError(f"Claude CLI returned no JSON envelope. stderr: {proc.stderr[-800:]}"
                               f" stdout: {proc.stdout[-800:]}")
         if env.get("is_error") or proc.returncode != 0:
+            log.warning("Claude CLI error (exit %s)", proc.returncode)
             raise EngineError(f"Claude CLI error: {str(env.get('result') or proc.stderr)[-800:]}")
         return env.get("result", "")
 
@@ -158,19 +170,23 @@ class GeminiCLI:
                    "--approval-mode", "plan", "--skip-trust"]
             if self.model:
                 cmd += ["-m", self.model]
+            log.info("Gemini %s run (%s)", self.model or "default", ", ".join(tools) or "no tools")
             proc = _run(cmd, brief, timeout, env=env)
         finally:
             os.unlink(system_path)
         if "IneligibleTierError" in proc.stderr or "no longer supported for Gemini Code Assist" in proc.stderr:
+            log.warning("Gemini CLI can no longer run on a personal Google sign-in")
             raise EngineError("Google no longer lets Gemini CLI run on a personal Google sign-in (it moved individuals "
                               "to Antigravity). Switch to Claude at the top, or add a Gemini API key from Google AI "
                               "Studio to use Gemini here.")
         try:
             payload = json.loads(proc.stdout[proc.stdout.find("{"):])
         except json.JSONDecodeError:
+            log.warning("Gemini CLI returned no JSON")
             hint = " Run `gemini` once in a terminal to sign in with Google." if "auth" in (proc.stderr + proc.stdout).lower() else ""
             raise EngineError(f"Gemini CLI returned no JSON.{hint} stderr: {proc.stderr[-800:]}")
         if payload.get("error"):
+            log.warning("Gemini CLI error")
             msg = json.dumps(payload["error"])
             if "auth method" in msg.lower():
                 raise EngineError("Gemini CLI is not signed in. Open a terminal, run `gemini`, choose "

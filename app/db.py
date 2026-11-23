@@ -17,7 +17,10 @@ import sqlite3
 import threading
 from contextlib import closing
 
+from . import logs
 from .config import data_dir, output_dir
+
+log = logs.get_logger("db")
 
 SCHEMA_VERSION = 6
 SCHEMA = """
@@ -345,7 +348,7 @@ def sync_soon(delay: float = 2.0) -> None:
         try:
             ctx.run(sync)
         except Exception:   # a copy that fails is redone by the next change; never break the change itself
-            pass
+            log.exception("database sync failed; the next change retries it")
     old = _timers.pop(pid, None)
     if old:
         old.cancel()
