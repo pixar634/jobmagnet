@@ -373,7 +373,9 @@ prep or a cold email, find contacts, or **export everything to Excel**.
 - **Three rounds planned like the real thing**: a screen, the deep round, and a leadership and culture round built on the company's own values.
 - **Model answers from your real experience**, in the first person, honest about gaps.
 - **Adaptive practice**, one question at a time, harder as you get them right.
-- **An adaptive coding test** for coding roles: ten problems in Python or JavaScript, run in a sandbox in your browser.
+- **An adaptive coding test** for coding roles: ten problems in Python or JavaScript, run in a sandbox in your
+  browser. Level 2 is written first, so the test starts in about a minute while the other levels are written in the
+  background.
 - **A practical assessment** in the shape of CodeSignal's take-homes: one project built up over four levels against
   the clock, hidden tests at submit, then a review of your code on what reviewers grade. A built-in sample needs no AI.
 
